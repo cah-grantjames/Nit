@@ -51,7 +51,7 @@ function NitSettings() {
         try {
             var json = JSON.parse(content);
         } catch(e){
-            console.log("NError! Invalid nit config.  Parse error. See (" + filePath + ")");
+            console.log("NError! Invalid .nitconfig!  Parse error. See (nitconfig_template.txt)");
             console.log(e);
         }
         return json;
@@ -212,18 +212,18 @@ function Nit() {
     this.cmds = [
                {arg: "b", name: "discoverBranch", requiresClean: false, action: function(nit, arg, currentBranch){ nit.onBranch(); }},
                {arg: "cob", name: "createAndCheckoutBranch", requiresClean: true, action: function(nit, arg, currentBranch){ nit.createAndCheckoutBranch(arg, currentBranch); }},
-               {arg: "st", name: "statusPrint", requiresClean: false, action: function(nit, arg, currentBranch){ nit.statusPrint(currentBranch); }},
+               {arg: "st", name: "status", requiresClean: false, action: function(nit, arg, currentBranch){ nit.statusPrint(currentBranch); }},
                {arg: "fb", name: "createAndCheckoutFeatureBranch", requiresClean: true, action: function(nit, arg, currentBranch){ nit.createAndCheckoutFeatureBranch(arg, currentBranch); }},
-               {arg: "dev", name: "gotoDevelop", requiresClean: true, action: function(nit, arg, currentBranch){ nit.gotoDevelop(currentBranch); }},
-               {arg: "push", name: "pushFull", requiresClean: true, action: function(nit, arg, currentBranch){ nit.pushFull(currentBranch); }},
-               {arg: "fci", name: "featureCommit", requiresClean: false, action: function(nit, arg, currentBranch){ nit.featureCommit(arg, currentBranch); }},
-               {arg: "ferge", name: "featureMerge", requiresClean: false, action: function(nit, arg, currentBranch){ nit.featureMerge(arg, currentBranch); }},
+               {arg: "dev", name: "checkout develop", requiresClean: true, action: function(nit, arg, currentBranch){ nit.gotoDevelop(currentBranch); }},
+               {arg: "push", name: "push", requiresClean: true, action: function(nit, arg, currentBranch){ nit.pushFull(currentBranch); }},
+               {arg: "fci", name: "make a commit on feature", requiresClean: false, action: function(nit, arg, currentBranch){ nit.featureCommit(arg, currentBranch); }},
+               {arg: "derge", name: "update develop and merge develop into current branch", requiresClean: true, action: function(nit, arg, currentBranch){ nit.updateDevThenMerge(currentBranch); }},
                {arg: "ci", name: "commit", requiresClean: false, action: function(nit, arg, currentBranch){ nit.commit(arg, currentBranch); }},
                {arg: "help", name: "help", requiresClean: false, action: function(nit, arg, currentBranch){ nit.help(); }},
                {arg: "browse", name: "browse jira", requiresClean: false, action: function(nit, arg, currentBranch){ nit.browse(currentBranch); }},
                {arg: "stage", name: "stage", requiresClean: false, action: function(nit, arg, currentBranch){ nit.stage(); }},
                {arg: "sts", name: "status -s", requiresClean: false, action: function(nit, arg, currentBranch){ nit.sts(); }},
-               {arg: "init", name: "initConfig", requiresClean: false, action: function(nit, arg, currentBranch){ nit.nettings.init(); }},
+               //{arg: "init", name: "initConfig", requiresClean: false, action: function(nit, arg, currentBranch){ nit.nettings.init(); }},
                {arg: "qci", name: "stage and commit", requiresClean: false, action:
                         function(nit, arg, currentBranch){
                             nit.stage(function(){
@@ -276,16 +276,31 @@ function Nit() {
         this.gitInherit(["status", "-s"]);
     };
 
-    this.featureMerge = function(featureNumber, currentBranch){
+    this.updateDevThenMerge = function(currentBranch){
         var self = this;
-        if(!featureNumber){
-            self.printer.E("NERROR: Missing a feature number for merge!");
-            return;
-        }
+        var alreadyUpStrFound = false;
+        self.gotoDevelop(currentBranch, function() {
+            self.git(["pull", "origin", "develop"], function(){
+                self.git(["checkout", currentBranch], function(data){
+                    self.git(["merge", "develop"], function(data){
+                        var isAlreadyStr = data.indexOf("Already up-to-date") != -1;
 
-        var fb = self.nettings.featurePrefix + featureNumber;
-        self.printer.I("Merging " + fb + " into " + currentBranch);
-        var gitArgs = ["merge", fb];
+                        if(!isAlreadyStr || !alreadyUpStrFound){
+                            self.printer.print("}"+data);
+                        }
+                        if(isAlreadyStr) {
+                            alreadyUpStrFound = true;
+                        }
+                    });
+                });
+            });
+        });
+    };
+
+    this.devMerge = function(currentBranch){
+        var self = this;
+        self.printer.I("Merging develop into " + currentBranch);
+        var gitArgs = ["merge", "develop"];
         self.git(gitArgs, function(data){
             console.log(data);
         });
@@ -338,38 +353,39 @@ function Nit() {
 
     this.isOnAFeatureBranch = function(currentBranch){
         var self = this;
-        console.log("isOnAFeatureBranch", self.nettings.featurePrefix);
         return currentBranch.indexOf(self.nettings.featurePrefix)!=-1;
     };
 
-    this.gotoDevelop = function(currentBranch){
-         this.createAndCheckoutBranch("develop", currentBranch);
+    this.gotoDevelop = function(currentBranch, cb){
+         this.createAndCheckoutBranch("develop", currentBranch, cb);
     };
 
-    this.createAndCheckoutFeatureBranch = function(branchName, currentBranch) {
-        this.createAndCheckoutBranch(this.nettings.featurePrefix + branchName, currentBranch);
+    this.createAndCheckoutFeatureBranch = function(branchName, currentBranch, cb) {
+        if(!branchName || branchName.length == 0){
+            this.printer.E("NError! Cannot create feature branch ''");
+            cb && cb();
+            return;
+        }
+        this.createAndCheckoutBranch(this.nettings.featurePrefix + branchName, currentBranch, cb);
     };
 
-    this.createAndCheckoutBranch = function(branchName, currentBranch){
+    this.createAndCheckoutBranch = function(branchName, currentBranch, cb){
         var self = this;
-
-//        self.printer.print("@from-"+currentBranch+"-");
-//        self.printer.print("@to-"+branchName+"-");
         if(currentBranch.trim() != branchName.trim()){
-
            self.git(["checkout", branchName], function(data){
                 var search = "error: ";
                 if(data.indexOf(search) === -1){
-                    self.onBranch();
+                    cb && cb();
                 } else {
                     self.git(["checkout", "-b", branchName], function(){
                         self.printer.print("Created branch "+branchName+" out of "+currentBranch);
-                        self.onBranch();
+                        cb && cb();
                     });
                 }
             });
         } else {
             self.printer.print("Already on " + branchName);
+            cb && cb();
         }
     };
 
@@ -398,7 +414,7 @@ function Nit() {
 
     this.nerrorUnclean = function() {
         var self = this;
-        self.printer.print("NERROR! Unclean status!");
+        self.printer.E("NERROR! Unclean status!");
     };
 
     this.statusPrint = function() {
@@ -448,7 +464,7 @@ function Nit() {
         this.runInherit("git", cmdArgs, cb);
     };
 
-    this.runInherit = function(cmd, cmdArgs) {
+    this.runInherit = function(cmd, cmdArgs, cb) {
         var msg = cmd;
         if(cmdArgs){
             for(var i=0; i<cmdArgs.length; i++) {
@@ -457,12 +473,14 @@ function Nit() {
         }
         var spawn = require('child_process').spawn;
         spawn(cmd, cmdArgs, {stdio : 'inherit'});
+
+        cb && cb();
     };
 
     this.run = function(cmd, cmdArgs, cb) {
         var spawn = require('child_process').spawn,
         ls = spawn(cmd, cmdArgs);
-        ///console.log("RUNNING ", cmd, cmdArgs);
+        // console.log("RUNNING ", cmd, cmdArgs);
         var ran = false;
         ls.stdout.on('data', function (data) {
             ran = true;
